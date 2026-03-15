@@ -4,53 +4,6 @@
 
 ---
 
-## Build
-
-```bash
-cd qtc_c
-make
-# produces: ./qtc
-# requires: gcc, zlib (-lz), bzip2 (-lbz2)
-```
-
-## Usage
-
-```bash
-# Compress
-./qtc -c input.txt output.qtc
-
-# Decompress
-./qtc -d output.qtc restored.txt
-```
-
----
-
-## Results
-
-Tested on the [Large Text Compression Benchmark](http://mattmahoney.net/dc/text.html) corpora.
-
-| File | Size | Quasicryth | gzip -9 | bzip2 -9 | xz -9 |
-|---|---|---|---|---|---|
-| alice29.txt | 152 KB | **36.92%** | 35.63% | 28.41% | 31.89% |
-| enwik8\_3M | 3 MB | **39.29%** | 36.29% | 28.89% | 28.39% |
-| enwik8\_10M | 10 MB | **38.51%** | 36.85% | 29.16% | 27.21% |
-| enwik8 | 100 MB | **37.70%** | 36.45% | 29.01% | 24.87% |
-| enwik9 | 1 GB | **35.99%** | 32.26% | 25.40% | 21.57% |
-
-*Ratio = compressed size / original size × 100%. Lower is better.*
-
-### Compressed file breakdown (enwik9, 1 GB)
-
-| Stream | Size | Notes |
-|---|---|---|
-| Payload (AC) | 254,952,735 B | Codebook indices + escape flags |
-| Escape words (bz2) | 83,537,358 B | Out-of-vocabulary words |
-| Codebook (zlib) | 77,585 B | All 11 codebook levels |
-| Case data (AC) | 21,315,698 B | Uppercase/titlecase flags |
-| **Total** | **359,883,431 B** | **35.99%** |
-
----
-
 ## How It Works
 
 Quasicryth operates entirely at the **word level**. The core idea is that a Fibonacci quasicrystal tiling assigns each word position one of two tile types — **L** (long, bigram) or **S** (short, unigram) — and this tiling has a recursive self-similar structure that naturally provides phrase-level lookup positions at all Fibonacci lengths simultaneously.
@@ -147,6 +100,53 @@ Decompression throughput: **~10 MB/s**. The ratio grows with file size because 8
 ![C/D ratio chart](charts/chart3.png)
 
 *Well-suited for write-once, read-many scenarios: archival, content distribution, static assets.*
+
+---
+
+## Build
+
+```bash
+cd qtc_c
+make
+# produces: ./qtc
+# requires: gcc, zlib (-lz), bzip2 (-lbz2)
+```
+
+## Usage
+
+```bash
+# Compress
+./qtc -c input.txt output.qtc
+
+# Decompress
+./qtc -d output.qtc restored.txt
+```
+
+---
+
+## Results
+
+Tested on the [Large Text Compression Benchmark](http://mattmahoney.net/dc/text.html) corpora.
+
+| File | Size | Quasicryth | gzip -9 | bzip2 -9 | xz -9 |
+|---|---|---|---|---|---|
+| alice29.txt | 152 KB | **36.92%** | 35.63% | 28.41% | 31.89% |
+| enwik8\_3M | 3 MB | **39.29%** | 36.29% | 28.89% | 28.39% |
+| enwik8\_10M | 10 MB | **38.51%** | 36.85% | 29.16% | 27.21% |
+| enwik8 | 100 MB | **37.70%** | 36.45% | 29.01% | 24.87% |
+| enwik9 | 1 GB | **35.99%** | 32.26% | 25.40% | 21.57% |
+
+*Ratio = compressed size / original size × 100%. Lower is better.*
+
+### Compressed file breakdown (enwik9, 1 GB)
+
+| Stream | Size | Notes |
+|---|---|---|
+| Payload (AC) | 254,952,735 B | Codebook indices + escape flags |
+| Escape words (bz2) | 83,537,358 B | Out-of-vocabulary words |
+| Codebook (zlib) | 77,585 B | All 11 codebook levels |
+| Case data (AC) | 21,315,698 B | Uppercase/titlecase flags |
+| **Total** | **359,883,431 B** | **35.99%** |
 
 ---
 
