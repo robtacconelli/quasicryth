@@ -1,4 +1,4 @@
-# Quasicryth
+<img src="quasicryth_banner.png">
 
 *Aperiodic Structures Never Collapse: Fibonacci Hierarchies for Lossless Compression*
 
