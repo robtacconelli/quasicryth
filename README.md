@@ -1,5 +1,7 @@
 # Quasicryth
 
+*Aperiodic Structures Never Collapse: Fibonacci Hierarchies for Lossless Compression*
+
 **Quasicryth** *(quasicrystalline tiling hierarchy)* is a lossless text compressor built on a one-dimensional Fibonacci quasicrystal tiling. It achieves competitive compression ratios on natural language text by exploiting a deep multi-scale phrase hierarchy — phrases of 2, 3, 5, 8, 13, 21, 34, 55, 89, and 144 words — whose structure is entirely determined by a single 2-byte parameter in the file header.
 
 ---
@@ -199,13 +201,35 @@ All levels 13g–144g are positions **structurally unavailable to any periodic t
 
 ## Theoretical Background
 
-The compressor is the empirical proof of three novel theorems about Fibonacci quasicrystal hierarchies.
+The paper proves an **Aperiodic Hierarchy Advantage** for Fibonacci quasicrystal tilings — a master result with seven supporting theorems.
 
-**Golden Compensation theorem** — the potential word coverage at every hierarchy level converges to the same constant *Wφ/√5 ≈ 0.724W*, independent of depth. The exponential decay in position count is cancelled exactly by the exponential growth in phrase length, via Binet's formula and *φ² = φ+1*.
+### Main theorem: Aperiodic Hierarchy Advantage
 
-**Activation Threshold theorem** — hierarchy level *m* first contributes when *W ≥ W\*_m = T_m · φ^{m-1} / r_m*, giving a closed-form prediction for when each deep level activates.
+The Fibonacci tiling is the only infinite binary tiling satisfying all five of the following simultaneously:
 
-**Piecewise-Linear Advantage theorem** — the aperiodic advantage over any periodic tiling is a convex, piecewise-linear function of corpus size. Slope increases at each activation threshold — the 33× jump at 1 GB is a discrete phase transition, not superlinear growth.
+1. **Non-collapse at every depth** — non-zero *n*-gram lookup positions exist at every hierarchy level. Every periodic tiling collapses after *O(log p)* levels for period *p* (proved via the Pisot-Vijayaraghavan property of *φ*).
+2. **Scale-invariant coverage** — potential word coverage *C(m) = P(m)·F_m → Wφ/√5* at every level.
+3. **Maximal codebook efficiency** — coverage efficiency *η_m = C_m/(F_m+1)* is maximal among aperiodic tilings.
+4. **Bounded parsing overhead** — total per-word flag entropy *h_flags ≤ 1/φ ≈ 0.618* bits/word regardless of depth; net efficiency *ν(W) → +∞* as *W* grows.
+5. **Strict coding entropy advantage** — for long-range-dependent sources, *H^fib(P) < H^per(P)* strictly.
+
+### Supporting theorems
+
+**Fibonacci Stability / Periodic Collapse** — The Fibonacci hierarchy never collapses; every periodic tiling collapses after *O(log p)* levels. All hierarchy levels 13g–144g are positions structurally unavailable to any periodic tiling.
+
+**Golden Compensation** — At every level *m*, the exponential decay in position count *P(m) ~ φ^{-m}* is cancelled exactly by the exponential growth in phrase length *F_m ~ φ^m/√5*, so coverage converges to the same constant *Wφ/√5 ≈ 0.724W* at every depth. Proved via Binet's formula and *φ² = φ+1*.
+
+**Sturmian Codebook Efficiency** — Using the Sturmian complexity law *p(n) = n+1* (Morse-Hedlund theorem), the Fibonacci hierarchy achieves the maximum possible codebook coverage efficiency *η_m = C_m/(F_m+1)* among all binary aperiodic tilings, since no aperiodic sequence can have fewer than *F_m+1* distinct length-*F_m* factors.
+
+**Goldilocks corollary** — Fibonacci is the only binary aperiodic sequence achieving both non-collapse and maximal Sturmian efficiency simultaneously.
+
+**Activation Threshold** — Level *m* first contributes compression when *W ≥ W\*_m = T_m · φ^{m-1} / r_m*, giving a closed-form prediction for when each deep level activates.
+
+**Piecewise-Linear Advantage** — The aperiodic advantage over any periodic tiling is a convex piecewise-linear function of corpus size, with slope increasing discretely at each activation threshold. The 33× jump from 100 MB to 1 GB is a discrete phase transition caused by the 89-gram and 144-gram levels activating, not superlinear growth of existing terms.
+
+**Fibonacci Redundancy Bound** — For exponentially mixing sources, coding redundancy at level *m* decays super-exponentially: *R_m^fib(P) = O(e^{-φ^m/(λ√5)})*, since *F_m ~ φ^m/√5* grows exponentially in *m*. Periodic systems remain locked at the depth where collapse occurs.
+
+**Exponential Dictionary Efficiency** — Per-entry gain *E_m = F_m·h̄ - log₂C_m = Ω(φ^m)*. Total dictionary value *V(k_max) = Ω(φ^{k_max})*, growing exponentially with hierarchy depth and exceeding any periodic hierarchy's *O(φ^{m\*})* bound.
 
 Full proofs (Perron-Frobenius, Pisot-Vijayaraghavan, Sturmian sequences, Weyl's equidistribution) in [`quasicryth_paper.pdf`](quasicryth_paper.pdf).
 
