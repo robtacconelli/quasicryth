@@ -1,6 +1,6 @@
 <img src="quasicryth_banner.png">
 
-*Aperiodic Structures Never Collapse: Fibonacci Hierarchies for Lossless Compression*
+**Aperiodic Structures Never Collapse: Fibonacci Hierarchies for Lossless Compression**
 
 **Quasicryth** *(quasicrystalline tiling hierarchy)* is a lossless text compressor built on a one-dimensional Fibonacci quasicrystal tiling. It achieves competitive compression ratios on natural language text by exploiting a deep multi-scale phrase hierarchy — phrases of 2, 3, 5, 8, 13, 21, 34, 55, 89, and 144 words — whose structure is entirely determined by a single 2-byte parameter in the file header.
 
