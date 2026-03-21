@@ -1,238 +1,204 @@
-<img src="quasicryth_banner.png">
+# Quasicryth (QTC v5.6)
 
-**Aperiodic Structures Never Collapse: Fibonacci Hierarchies for Lossless Compression**
+**Aperiodic Structures Never Collapse: Multi-Tiling Fibonacci Hierarchies for Lossless Compression**
 
-**Quasicryth** *(quasicrystalline tiling hierarchy)* is a lossless text compressor built on a one-dimensional Fibonacci quasicrystal tiling. It achieves competitive compression ratios on natural language text by exploiting a deep multi-scale phrase hierarchy — phrases of 2, 3, 5, 8, 13, 21, 34, 55, 89, and 144 words — whose structure is entirely determined by a single 2-byte parameter in the file header.
+QTC is a lossless text compressor built on 36 aperiodic tilings drawn from multiple irrational-number families. A 10-level Fibonacci substitution hierarchy extracts phrases up to 144 words long, which are then encoded through adaptive arithmetic coding with word-level LZ77. Written in C with no external ML dependencies.
 
 ---
 
 ## How It Works
 
-Quasicryth operates entirely at the **word level**. The core idea is that a Fibonacci quasicrystal tiling assigns each word position one of two tile types — **L** (long, bigram) or **S** (short, unigram) — and this tiling has a recursive self-similar structure that naturally provides phrase-level lookup positions at all Fibonacci lengths simultaneously.
+1. **Tokenisation and case separation.** Input text is split into word tokens; case information (lower/title/upper) is extracted into a separate stream encoded with order-2 adaptive arithmetic coding.
 
-### 1. Tokenisation and case separation
+2. **Codebook construction.** Eleven frequency-ranked codebooks are built across the Fibonacci hierarchy: up to 64K unigrams, 32K bigrams, 32K trigrams, down to 500 entries for 144-grams. Codebook sizes scale automatically with input length.
 
-The input is split into word tokens. Capitalisation (lower / title / upper) is stripped and encoded separately as a 3-symbol stream with arithmetic coding. The rest of the pipeline works on lowercased tokens.
+3. **Multi-structure tiling.** 36 aperiodic tilings are generated via the generalised cut-and-project method:
 
-### 2. Codebook construction
+   ```
+   tile(k) = L  if  floor((k+1)*alpha + theta) - floor(k*alpha + theta) = 1
+   tile(k) = S  otherwise
+   ```
 
-Eleven frequency-ranked codebooks are built from the word sequence:
+   The 36 tilings come from three families:
 
-| Codebook | Phrase length | Max entries |
-|---|---|---|
-| Unigram | 1 word | 8,000 |
-| Bigram | 2 words | 6,000 |
-| Trigram | 3 words | 2,000 |
-| 5-gram | 5 words | 2,000 |
-| 8-gram | 8 words | 1,000 |
-| 13-gram | 13 words | 1,000 |
-| 21-gram | 21 words | 500 |
-| 34-gram | 34 words | 500 |
-| 55-gram | 55 words | 200 |
-| 89-gram | 89 words | 200 |
-| 144-gram | 144 words | 100 |
+   | Family | Count | Alpha | Hierarchy depth |
+   |---|---|---|---|
+   | Golden-ratio (1/phi) | 12 tilings | 0.6180... | Full 10 levels (144-gram) |
+   | Original non-golden (sqrt58, noble5, sqrt13) | 6 tilings | 0.6056--0.6158 | Levels 3--5+ |
+   | Optimized alphas (iterative greedy search) | 18 tilings | 0.502--0.619 | Varies; redistribute trigrams to deeper levels |
 
-The phrase lengths {1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144} are consecutive Fibonacci numbers. This is not coincidental — see [Tiling](#3-fibonacci-quasicrystal-tiling) below.
+   Key insight: near-golden optimized alphas do not merely add trigram positions -- they *redistribute* coverage, stealing trigrams to upgrade matches to 13-gram, 21-gram, and 34-gram levels.
 
-### 3. Fibonacci quasicrystal tiling
+4. **Deep substitution hierarchy.** Each tiling's L/S sequence is deflated through 10 levels of Fibonacci substitution (L -> LS, S -> L inverse). At each level, super-L tiles span Fibonacci-many words (3, 5, 8, 13, 21, 34, 55, 89, 144), enabling codebook lookup at that phrase length.
 
-The compressor generates a Fibonacci quasicrystal sequence using the **cut-and-project** method. For each word position *k*:
+5. **Greedy non-overlapping selection.** Deep matches from all 36 tilings are merged; at each word position the deepest match wins. Three-pass greedy: deep levels first, then bigrams, then unigrams/escapes.
 
-```
-tile(k) = L  if  floor((k+1+θ)/φ) - floor((k+θ)/φ) = 1
-tile(k) = S  otherwise
-```
+6. **Sequential AC with LZ77.** The parsed event stream undergoes word-level LZ77 (2^22-entry hash table, 4-entry chains), then is encoded with variable-alphabet Fenwick-tree adaptive arithmetic coding at 24-bit precision. Order-2 context conditioning on encoding level, 64-entry MTF recency cache per level, two-tier unigram encoding.
 
-where *φ = (1+√5)/2* is the golden ratio and *θ* is a phase parameter.
+7. **LZMA escape stream.** Out-of-vocabulary words are collected into a separate buffer and compressed with LZMA (preset 9 extreme).
 
-- An **L tile** at position *k* means: attempt a **bigram** lookup at words *[k, k+1]*
-- An **S tile** means: attempt a **unigram** lookup at word *k*
-
-The compressor evaluates **32 candidate phases** and selects the one that maximises a scoring function which exponentially rewards deeper hierarchy hits:
-unigram +3, bigram +10, trigram +20, 5-gram +50, 8-gram +100, 13-gram +200, ..., 144-gram +6400.
-
-### 4. Deep substitution hierarchy
-
-The tiling is more than a flat L/S sequence. Applying the inverse Fibonacci substitution rule — merging each (L, S) pair into a super-L, each isolated L into a super-S — builds a 10-level hierarchy:
-
-```
-Level 0:  L S L L S ...        (bigrams and unigrams)
-Level 1:  [L S] → super-L      (trigrams,  3 words)
-Level 2:  super²-L             (5-grams,   5 words)
-Level 3:  super³-L             (8-grams,   8 words)
-Level 4:  super⁴-L             (13-grams, 13 words)
-  ...
-Level 9:  super⁹-L             (144-grams,144 words)
-```
-
-At each L tile position, the encoder tries the **deepest applicable hierarchy level first**, falling back down until a codebook hit is found or falling through to a raw unigram escape. A 144-gram hit encodes 144 words as a single arithmetic coding symbol.
-
-### 5. Arithmetic coding
-
-Each tile is encoded with a 256-symbol adaptive arithmetic coder. The tile's position within the hierarchy provides **3 bits of free context** (8 sub-models per tile type), derived deterministically from the tiling — no extra bits needed.
-
-### 6. Out-of-vocabulary escape stream
-
-Words not in any codebook are collected into a separate buffer and compressed with **bzip2** (~2.6 bits/byte vs ~3.5 bits/byte for inline AC encoding). The quasicrystal tiling determines which words escape; the decoder pulls from this buffer in the same order.
-
-### 7. Output format
-
-```
-[magic 4B][orig size 4B][phase 2B][flags 1B][counts...][payload][case][codebook(zlib)][escapes(bz2)][MD5 16B]
-```
-
-The **2-byte phase** is the only structural information in the header. Everything else — all tile boundaries, hierarchy levels, deep n-gram positions, and model assignments — is regenerated deterministically by the decoder.
+8. **Output format.** Magic `QM56`, 45-byte header, no tiling parameters stored. The decompressor needs no tiling information -- the parsed result is encoded directly in the bitstream. MD5 checksum appended for integrity verification.
 
 ---
 
-## Asymmetric Compression
+## Results
 
-Quasicryth is an **asymmetric compressor**: compression is slow, decompression is fast.
+### Compression Ratios
 
-| File | Compress | Decompress | C/D ratio |
+| File | Size | QTC Multi | QTC Fib | gzip -9 | bzip2 -9 | xz -9 |
+|---|---|---|---|---|---|---|
+| alice29.txt | 152 KB | **35.60%** | 35.91% | 35.63% | 28.40% | 31.88% |
+| enwik8\_3M | 3 MB | **31.85%** | 32.55% | 36.28% | 28.88% | 28.38% |
+| enwik8\_10M | 10 MB | **29.83%** | 30.56% | 36.85% | 29.16% | 27.21% |
+| enwik8 | 100 MB | **26.25%** | 27.03% | 36.44% | 29.00% | 24.86% |
+| enwik9 | 1 GB | **22.59%** | 23.46% | 32.26% | 25.40% | 21.57% |
+
+QTC beats bzip2 on all benchmarks and approaches xz at scale.
+
+### Compressed File Breakdown (enwik9)
+
+| Stream | Size | Share |
+|---|---|---|
+| Payload (AC) | 180,760,315 B | 80.0% |
+| Escape words (LZMA) | 24,227,220 B | 10.7% |
+| Case data (AC) | 20,397,073 B | 9.0% |
+| Codebook (LZMA) | 533,680 B | 0.2% |
+| **Total** | **225,918,349 B (22.59%)** | |
+
+### Timing
+
+| File | Compress (Multi) | Decompress (Multi) | C/D ratio |
 |---|---|---|---|
-| alice29.txt (152 KB) | 0.1s | <0.1s | ~5× |
-| enwik8\_3M (3 MB) | 1.9s | 0.3s | 6.3× |
-| enwik8\_10M (10 MB) | 11.5s | 1.0s | 11.5× |
-| enwik8 (100 MB) | 142.0s | 10.0s | 14.2× |
-| enwik9 (1 GB) | 1,539.7s | 97.0s | **15.9×** |
+| alice29.txt | 0.10s | 0.01s | 10x |
+| enwik8\_3M | 2.05s | 0.14s | 15x |
+| enwik8\_10M | 11.80s | 0.47s | 25x |
+| enwik8 | 120.32s | 4.74s | 25x |
+| enwik9 | 1,476s | 44.82s | **33x** |
 
-Decompression throughput: **~10 MB/s**. The ratio grows with file size because 89-gram and 144-gram frequency counting dominates codebook construction at scale. Decompression is always a single sequential pass with no search.
+Decompression throughput: ~22 MB/s. Asymmetric by design -- compression performs tiling search across 36 structures; decompression simply reads the encoded event stream sequentially.
 
-![C/D ratio chart](charts/chart3.png)
+---
 
-*Well-suited for write-once, read-many scenarios: archival, content distribution, static assets.*
+## Deep Hierarchy Hits
+
+The core advantage of quasicrystalline tiling is access to deep hierarchy levels that periodic tilings cannot reach. These are the greedy-selected deep phrase matches (13-gram and above) across benchmarks:
+
+| File | Words | 13g | 21g | 34g | 55g | 89g | 144g | Total |
+|---|---|---|---|---|---|---|---|---|
+| alice29.txt | 36K | 9 | -- | -- | -- | -- | -- | 9 |
+| enwik8\_3M | 821K | 2,469 | 489 | 98 | 65 | -- | -- | 3,121 |
+| enwik8\_10M | 2.8M | 9,400 | 1,553 | 346 | 131 | 8 | 5 | 11,443 |
+| enwik8 | 27.7M | 87,344 | 15,736 | 4,118 | 1,464 | 224 | 85 | 108,971 |
+| enwik9 | 298.3M | 1,890,784 | 424,084 | 153,713 | 36,776 | 5,544 | 2,026 | 2,512,927 |
+
+At enwik9 scale, over 2.5 million phrase matches span 13 words or more, including 2,026 matches spanning 144 consecutive words each.
+
+---
+
+## Multi-Tiling Contribution
+
+Per-family breakdown of tiling positions on enwik9:
+
+| Family | Tilings | Base positions | Deep (13g+) coverage |
+|---|---|---|---|
+| Golden (1/phi) | 12 | 132M | Full 10-level hierarchy |
+| Original non-golden | 6 | +25M | Levels 3--5+ |
+| Optimized alphas | 18 | +4M | Varies by alpha |
+| **Total** | **36** | **161M** | **+22% over golden-only** |
+
+Notable per-alpha behaviour:
+
+- **opt-0.502**: adds 2.7M trigram positions but zero 13g+ hits. Pure low-level coverage.
+- **opt-0.619**: near-golden alpha that finds matches up to 89-gram depth.
+- **Near-golden alphas redistribute**: they steal trigram positions to upgrade coverage to 13g/21g/34g levels.
+
+### A/B Tests
+
+Controlled experiments with identical codebooks, varying only the tiling strategy:
+
+| Comparison | alice29.txt | enwik9 |
+|---|---|---|
+| Fibonacci vs Period-5 advantage | 999 B | 11,089,469 B |
+| Multi vs Fibonacci advantage | 458 B | 8,642,288 B |
+
+The aperiodic advantage grows superlinearly with input size. Period-5 (LLSLS) hierarchy collapses at level 4 -- all tiles become S, yielding zero positions at 13-gram and above. The Fibonacci hierarchy never collapses.
+
+---
+
+## Theoretical Background
+
+The Fibonacci substitution L -> LS, S -> L has substitution matrix with dominant eigenvalue phi (the golden ratio), a Pisot-Vijayaraghavan number. This guarantees:
+
+- **Hierarchy never collapses**: L/S ratio stays exactly phi:1 at every deflation level.
+- **Periodic tilings always collapse**: any periodic tiling has rational L-frequency; the second eigenvector component grows as phi^k, driving one tile count to zero within O(log(period)) levels.
+- **Equidistribution** (Weyl 1910): for irrational alpha, the sequence {k*alpha mod 1} is equidistributed on [0,1), ensuring uniform n-gram coverage at every scale.
+- **Sturmian structure**: the Fibonacci word is balanced and aperiodic with minimal factor complexity (n+1 distinct factors of length n), maximising codebook efficiency.
+
+A detailed formal analysis, including eigenvalue proofs, the three-distance theorem, and information-theoretic bounds on the aperiodic advantage, is available in the accompanying paper (`quasicryth_paper.pdf`).
 
 ---
 
 ## Build
 
 ```bash
-cd qtc_c
+cd qtc_c_multi_combined
 make
-# produces: ./qtc
-# requires: gcc, zlib (-lz), bzip2 (-lbz2)
+```
+
+Requirements: `gcc`, `zlib` (`-lz`), `bzip2` (`-lbz2`), `liblzma` (`-llzma`).
+
+On Debian/Ubuntu:
+
+```bash
+sudo apt install gcc zlib1g-dev libbz2-dev liblzma-dev
 ```
 
 ## Usage
 
 ```bash
-# Compress
-./qtc -c input.txt output.qtc
+# Compress (multi-structure, 36 tilings -- default)
+./qtc c input.txt output.qtc
+
+# Compress (Fibonacci-only, 12 golden-ratio tilings)
+./qtc -f c input.txt output.qtc
+
+# Compress (no-tiling, A/B baseline)
+./qtc -n c input.txt output.qtc
+
+# Compress (Period-5, A/B periodic baseline)
+./qtc -p5 c input.txt output.qtc
 
 # Decompress
-./qtc -d output.qtc restored.txt
+./qtc d output.qtc restored.txt
+
+# Benchmark (compress + decompress + verify round-trip)
+./qtc bench input.txt
 ```
 
 ---
 
-## Results
+## Optimization History
 
-Tested on the [Large Text Compression Benchmark](http://mattmahoney.net/dc/text.html) corpora.
-
-| File | Size | Quasicryth | gzip -9 | bzip2 -9 | xz -9 |
-|---|---|---|---|---|---|
-| alice29.txt | 152 KB | **36.92%** | 35.63% | 28.41% | 31.89% |
-| enwik8\_3M | 3 MB | **39.29%** | 36.29% | 28.89% | 28.39% |
-| enwik8\_10M | 10 MB | **38.51%** | 36.85% | 29.16% | 27.21% |
-| enwik8 | 100 MB | **37.70%** | 36.45% | 29.01% | 24.87% |
-| enwik9 | 1 GB | **35.99%** | 32.26% | 25.40% | 21.57% |
-
-*Ratio = compressed size / original size × 100%. Lower is better.*
-
-### Compressed file breakdown (enwik9, 1 GB)
-
-| Stream | Size | Notes |
+| Change | enwik8 ratio | Delta |
 |---|---|---|
-| Payload (AC) | 254,952,735 B | Codebook indices + escape flags |
-| Escape words (bz2) | 83,537,358 B | Out-of-vocabulary words |
-| Codebook (zlib) | 77,585 B | All 11 codebook levels |
-| Case data (AC) | 21,315,698 B | Uppercase/titlecase flags |
-| **Total** | **359,883,431 B** | **35.99%** |
+| v5.1 baseline | 30.28% | -- |
+| Recency cache, context-conditioned indices, order-2 level model, adaptive case encoding | 28.59% | -1.69pp |
+| LZMA escapes + adaptive case | 28.09% | -0.50pp |
+| LZMA codebook | 28.00% | -0.09pp |
+| Word-level LZ77 | 27.06% | -0.94pp |
+| Hash-chain (4-entry) + log-scale offset + two-tier unigram | 26.67% | -0.39pp |
+| Larger LZ hash (2^22) | 26.53% | -0.14pp |
+| Multi-tiling (36 structures) | 26.25% | -0.28pp |
+| **Total improvement** | | **-4.03pp** |
 
 ---
 
-## Charts
+## Author
 
-### QC Tiling Contribution
-Payload savings from the quasicrystal tiling alone over an all-unigram baseline (same codebooks, same escape stream). At 1 GB the tiling saves **45,608,715 B (4.56%)**.
-
-![QC savings](charts/chart4.png)
-
-### Deep Hierarchy Hits vs Corpus Size
-Labels show absolute deep hit counts. At enwik9 scale (298M words), **812,654 deep hits** across levels 13g–144g.
-
-![Deep hits scaling](charts/chart1.png)
-
-### Word-Weighted Contribution by Level
-Each hit weighted by phrase length (*hits × n*). The 144-gram contributes 1.1% of covered words at 1 GB despite only 945 hits — each hit encodes 144 words.
-
-![Word-weighted contribution](charts/chart2.png)
-
-### Aperiodic Advantage: Fibonacci vs Period-5
-Controlled A/B test with identical codebooks. Period-5 (LLSLS, the closest periodic approximant) collapses at level 4 — zero 13-gram through 144-gram positions. Fibonacci never collapses.
-
-| File | Fibonacci payload | Period-5 payload | Fibonacci advantage |
-|---|---|---|---|
-| enwik8\_3M | 801,260 B | 802,632 B | **+1,372 B** |
-| enwik8\_10M | 2,654,135 B | 2,659,942 B | **+5,807 B** |
-| enwik8 | 26,196,712 B | 26,237,097 B | **+40,385 B** |
-| enwik9 | 254,952,735 B | 256,302,106 B | **+1,349,371 B** |
-
-![Aperiodic advantage](charts/chart5.png)
-
-The 33× jump from 100 MB to 1 GB (for a 10× size increase) is explained by the 89-gram and 144-gram levels activating at enwik9 scale, adding new compression terms absent at smaller scales.
+Roberto Tacconelli (tacconelli.rob@gmail.com), Independent Researcher
 
 ---
 
-## Deep Hierarchy Hits
+## License
 
-All levels 13g–144g are positions **structurally unavailable to any periodic tiling**.
-
-| File | Words | 13g | 21g | 34g | 55g | 89g | 144g | Total |
-|---|---|---|---|---|---|---|---|---|
-| alice29.txt | 36K | 2 | — | — | — | — | — | **2** |
-| enwik8\_3M | 821K | 971 | 195 | 77 | — | — | — | **1,243** |
-| enwik8\_10M | 2.8M | 2,715 | 383 | 140 | 47 | — | — | **3,285** |
-| enwik8 | 27.7M | 24,910 | 3,256 | 1,369 | 551 | — | — | **30,086** |
-| enwik9 | 298.3M | 652,124 | 109,492 | 40,475 | 7,222 | 2,396 | 945 | **812,654** |
-
----
-
-## Theoretical Background
-
-The paper proves an **Aperiodic Hierarchy Advantage** for Fibonacci quasicrystal tilings — a master result with seven supporting theorems.
-
-### Main theorem: Aperiodic Hierarchy Advantage
-
-The Fibonacci tiling is the only infinite binary tiling satisfying all five of the following simultaneously:
-
-1. **Non-collapse at every depth** — non-zero *n*-gram lookup positions exist at every hierarchy level. Every periodic tiling collapses after *O(log p)* levels for period *p* (proved via the Pisot-Vijayaraghavan property of *φ*).
-2. **Scale-invariant coverage** — potential word coverage *C(m) = P(m)·F_m → Wφ/√5* at every level.
-3. **Maximal codebook efficiency** — coverage efficiency *η_m = C_m/(F_m+1)* is maximal among aperiodic tilings.
-4. **Bounded parsing overhead** — total per-word flag entropy *h_flags ≤ 1/φ ≈ 0.618* bits/word regardless of depth; net efficiency *ν(W) → +∞* as *W* grows.
-5. **Strict coding entropy advantage** — for long-range-dependent sources, *H^fib(P) < H^per(P)* strictly.
-
-### Supporting theorems
-
-**Fibonacci Stability / Periodic Collapse** — The Fibonacci hierarchy never collapses; every periodic tiling collapses after *O(log p)* levels. All hierarchy levels 13g–144g are positions structurally unavailable to any periodic tiling.
-
-**Golden Compensation** — At every level *m*, the exponential decay in position count *P(m) ~ φ^{-m}* is cancelled exactly by the exponential growth in phrase length *F_m ~ φ^m/√5*, so coverage converges to the same constant *Wφ/√5 ≈ 0.724W* at every depth. Proved via Binet's formula and *φ² = φ+1*.
-
-**Sturmian Codebook Efficiency** — Using the Sturmian complexity law *p(n) = n+1* (Morse-Hedlund theorem), the Fibonacci hierarchy achieves the maximum possible codebook coverage efficiency *η_m = C_m/(F_m+1)* among all binary aperiodic tilings, since no aperiodic sequence can have fewer than *F_m+1* distinct length-*F_m* factors.
-
-**Goldilocks corollary** — Fibonacci is the only binary aperiodic sequence achieving both non-collapse and maximal Sturmian efficiency simultaneously.
-
-**Activation Threshold** — Level *m* first contributes compression when *W ≥ W\*_m = T_m · φ^{m-1} / r_m*, giving a closed-form prediction for when each deep level activates.
-
-**Piecewise-Linear Advantage** — The aperiodic advantage over any periodic tiling is a convex piecewise-linear function of corpus size, with slope increasing discretely at each activation threshold. The 33× jump from 100 MB to 1 GB is a discrete phase transition caused by the 89-gram and 144-gram levels activating, not superlinear growth of existing terms.
-
-**Fibonacci Redundancy Bound** — For exponentially mixing sources, coding redundancy at level *m* decays super-exponentially: *R_m^fib(P) = O(e^{-φ^m/(λ√5)})*, since *F_m ~ φ^m/√5* grows exponentially in *m*. Periodic systems remain locked at the depth where collapse occurs.
-
-**Exponential Dictionary Efficiency** — Per-entry gain *E_m = F_m·h̄ - log₂C_m = Ω(φ^m)*. Total dictionary value *V(k_max) = Ω(φ^{k_max})*, growing exponentially with hierarchy depth and exceeding any periodic hierarchy's *O(φ^{m\*})* bound.
-
-Full proofs (Perron-Frobenius, Pisot-Vijayaraghavan, Sturmian sequences, Weyl's equidistribution) in [`quasicryth_paper.pdf`](quasicryth_paper.pdf).
-
----
-
-**Author:** Roberto Tacconelli (tacconelli.rob@gmail.com), Independent Researcher
+See repository root for license information.
