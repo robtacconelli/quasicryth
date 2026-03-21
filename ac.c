@@ -3,6 +3,7 @@
  */
 #include "ac.h"
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 /* ══════════════════════════════════════════════════════
@@ -19,7 +20,7 @@ void model_update(qtc_model_t *m, uint8_t sym) {
     if (m->total >= AC_MAX_FREQ) {
         m->total = 0;
         for (int i = 0; i < 256; i++) {
-            m->freq[i] = (m->freq[i] >> 1) | 1;  /* max(1, freq>>1) */
+            m->freq[i] = (m->freq[i] >> 1) | 1u;
             m->total += m->freq[i];
         }
     }
@@ -56,9 +57,18 @@ static inline void enc_output(qtc_encoder_t *e, uint8_t bit) {
 }
 
 void enc_encode(qtc_encoder_t *e, uint32_t cum_lo, uint32_t cum_hi, uint32_t total) {
+    if (cum_lo >= cum_hi || cum_hi > total || total == 0) {
+        fprintf(stderr, "\nFATAL: enc_encode bad CDF: cum_lo=%u cum_hi=%u total=%u\n", cum_lo, cum_hi, total);
+        abort();
+    }
     uint32_t r = e->hi - e->lo + 1;
     e->hi = e->lo + (uint32_t)((uint64_t)r * cum_hi / total) - 1;
     e->lo = e->lo + (uint32_t)((uint64_t)r * cum_lo / total);
+    if (e->lo > e->hi) {
+        fprintf(stderr, "\nFATAL: enc_encode range inversion lo=%u hi=%u (r=%u cum=%u/%u/%u)\n",
+                e->lo, e->hi, r, cum_lo, cum_hi, total);
+        abort();
+    }
     for (;;) {
         if (e->hi < AC_HALF) {
             enc_output(e, 0);
@@ -157,36 +167,109 @@ uint8_t ac_dec_sym(qtc_decoder_t *d, qtc_model_t *m) {
     return sym;
 }
 
-void encode_index(qtc_encoder_t *e, qtc_model_t *model, qtc_model_t *ext, uint32_t idx) {
-    if (idx < 254) {
-        ac_enc_sym(e, model, (uint8_t)idx);
-    } else if (idx < 509) {
-        ac_enc_sym(e, model, QTC_EXT_SYM);
-        ac_enc_sym(e, ext, (uint8_t)(idx - 254));
-    } else if (idx < 65789) {
-        ac_enc_sym(e, model, QTC_EXT_SYM);
-        ac_enc_sym(e, ext, 255);  /* stage-2 flag */
-        uint32_t v = idx - 509;
-        ac_enc_sym(e, ext, (uint8_t)(v >> 8));
-        ac_enc_sym(e, ext, (uint8_t)(v & 0xFF));
-    } else {
-        ac_enc_sym(e, model, QTC_ESC_SYM);
+/* ══════════════════════════════════════════════════════
+ * Variable-size adaptive model (Fenwick-tree accelerated)
+ * ══════════════════════════════════════════════════════ */
+
+/* Fenwick tree: prefix sum query for indices 1..i (sum of freq[0..i-1]) */
+static inline uint32_t ft_sum(const uint32_t *tree, int i) {
+    uint32_t s = 0;
+    while (i > 0) { s += tree[i]; i -= i & (-i); }
+    return s;
+}
+
+/* Fenwick tree: point update at 0-indexed position i */
+static inline void ft_add(uint32_t *tree, int n, int i, int32_t delta) {
+    for (i++; i <= n; i += i & (-i))  /* 0-indexed → 1-indexed */
+        tree[i] += (uint32_t)delta;
+}
+
+/* Fenwick tree: find largest pos where prefix_sum(pos) <= target */
+static inline uint32_t ft_find(const uint32_t *tree, int n, uint32_t target) {
+    int pos = 0;
+    int pw = 1;
+    while (pw <= n) pw <<= 1;
+    for (pw >>= 1; pw > 0; pw >>= 1) {
+        if (pos + pw <= n && tree[pos + pw] <= target) {
+            target -= tree[pos + pw];
+            pos += pw;
+        }
+    }
+    return (uint32_t)pos;
+}
+
+void vmodel_init(qtc_vmodel_t *m, uint32_t n_sym) {
+    m->n_sym = n_sym;
+    m->freq = (uint32_t *)malloc(n_sym * sizeof(uint32_t));
+    m->tree = (uint32_t *)calloc(n_sym + 1, sizeof(uint32_t));
+    for (uint32_t i = 0; i < n_sym; i++) {
+        m->freq[i] = 1;
+        ft_add(m->tree, (int)n_sym, (int)i, 1);
+    }
+    m->total = n_sym;
+}
+
+void vmodel_free(qtc_vmodel_t *m) {
+    free(m->freq); m->freq = NULL;
+    free(m->tree); m->tree = NULL;
+}
+
+static void vmodel_update(qtc_vmodel_t *m, uint32_t sym) {
+    m->freq[sym]++;
+    ft_add(m->tree, (int)m->n_sym, (int)sym, 1);
+    m->total++;
+    if (m->total >= AC_MAX_FREQ) {
+        /* Rescale: halve all frequencies (min 1), rebuild tree */
+        m->total = 0;
+        memset(m->tree, 0, (m->n_sym + 1) * sizeof(uint32_t));
+        for (uint32_t i = 0; i < m->n_sym; i++) {
+            m->freq[i] = (m->freq[i] >> 1) | 1u;
+            m->total += m->freq[i];
+            ft_add(m->tree, (int)m->n_sym, (int)i, (int32_t)m->freq[i]);
+        }
     }
 }
 
-int32_t decode_index(qtc_decoder_t *d, qtc_model_t *model, qtc_model_t *ext) {
-    uint8_t sym = ac_dec_sym(d, model);
-    if (sym == QTC_EXT_SYM) {
-        uint8_t lo = ac_dec_sym(d, ext);
-        if (lo == 255) {
-            uint8_t hi2 = ac_dec_sym(d, ext);
-            uint8_t lo2 = ac_dec_sym(d, ext);
-            return 509 + ((int32_t)hi2 << 8) + lo2;
-        }
-        return 254 + lo;
+void venc_sym(qtc_encoder_t *e, qtc_vmodel_t *m, uint32_t sym) {
+    if (sym >= m->n_sym) {
+        fprintf(stderr, "\nFATAL: venc_sym out of bounds: sym=%u n_sym=%u total=%u\n",
+                sym, m->n_sym, m->total);
+        abort();
     }
-    if (sym == QTC_ESC_SYM) return -1;
-    return (int32_t)sym;
+    uint32_t cum_lo = ft_sum(m->tree, (int)sym);
+    uint32_t cum_hi = cum_lo + m->freq[sym];
+    enc_encode(e, cum_lo, cum_hi, m->total);
+    vmodel_update(m, sym);
+}
+
+uint32_t vdec_sym(qtc_decoder_t *d, qtc_vmodel_t *m) {
+    uint32_t r = d->hi - d->lo + 1;
+    uint32_t scaled = (uint32_t)(((uint64_t)(d->val - d->lo + 1) * m->total - 1) / r);
+
+    /* Find symbol using Fenwick tree */
+    uint32_t sym = ft_find(m->tree, (int)m->n_sym, scaled);
+
+    uint32_t cum_lo = ft_sum(m->tree, (int)sym);
+    uint32_t cum_hi = cum_lo + m->freq[sym];
+
+    /* Update decoder range */
+    d->hi = d->lo + (uint32_t)((uint64_t)r * cum_hi / m->total) - 1;
+    d->lo = d->lo + (uint32_t)((uint64_t)r * cum_lo / m->total);
+    for (;;) {
+        if (d->hi < AC_HALF) {
+            /* nothing */
+        } else if (d->lo >= AC_HALF) {
+            d->lo -= AC_HALF; d->hi -= AC_HALF; d->val -= AC_HALF;
+        } else if (d->lo >= AC_QTR && d->hi < 3 * AC_QTR) {
+            d->lo -= AC_QTR; d->hi -= AC_QTR; d->val -= AC_QTR;
+        } else break;
+        d->lo <<= 1;
+        d->hi = (d->hi << 1) | 1;
+        d->val = (d->val << 1) | dec_read_bit(d);
+    }
+
+    vmodel_update(m, sym);
+    return sym;
 }
 
 /* ══════════════════════════════════════════════════════

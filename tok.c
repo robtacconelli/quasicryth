@@ -49,36 +49,36 @@ static bool case_roundtrips(const uint8_t *orig, const uint8_t *low,
 /* ══════════════════════════════════════════════════════
  * Tokenize with case separation
  * ══════════════════════════════════════════════════════ */
-uint32_t tokenize(const uint8_t *data, uint32_t len,
-                  uint8_t **lowered_out, uint32_t *lowered_len,
+uint32_t tokenize(const uint8_t *data, uint64_t len,
+                  uint8_t **lowered_out, uint64_t *lowered_len,
                   qtc_token_t **tokens_out) {
     /* Allocate lowered buffer (same size as input) */
-    uint8_t *low = (uint8_t *)malloc(len + 1);
-    uint32_t low_len = 0;
+    uint8_t *low = (uint8_t *)malloc((size_t)(len + 1));
+    uint64_t low_len = 0;
 
     /* Token array (estimated) */
-    uint32_t tok_cap = len / 4 + 16;
+    size_t tok_cap = (size_t)(len / 4) + 16;
     qtc_token_t *toks = (qtc_token_t *)malloc(tok_cap * sizeof(qtc_token_t));
     uint32_t n_tok = 0;
 
-    uint32_t i = 0;
+    uint64_t i = 0;
     while (i < len) {
         if (n_tok >= tok_cap) {
-            tok_cap *= 2;
+            tok_cap += tok_cap / 2;  /* grow 1.5x to avoid overflow */
             toks = (qtc_token_t *)realloc(toks, tok_cap * sizeof(qtc_token_t));
         }
 
         if (is_alpha_or_hi(data[i])) {
             /* Word part (alpha) */
-            uint32_t j = i + 1;
+            uint64_t j = i + 1;
             while (j < len && is_alpha_or_hi(data[j])) j++;
-            uint32_t k = j;
+            uint64_t k = j;
             while (k < len && is_ws(data[k])) k++;
 
             /* Determine case flag from the word-only part [i..j) */
             const uint8_t *wp = &data[i];
-            uint32_t wp_len = j - i;
-            uint32_t full_len = k - i;
+            uint32_t wp_len = (uint32_t)(j - i);
+            uint32_t full_len = (uint32_t)(k - i);
 
             /* Check all-lower */
             bool all_lower = true;
@@ -99,8 +99,8 @@ uint32_t tokenize(const uint8_t *data, uint32_t len,
             }
 
             /* Make lowered version of full token [i..k) */
-            uint32_t low_start = low_len;
-            for (uint32_t m = i; m < k; m++)
+            uint64_t low_start = low_len;
+            for (uint64_t m = i; m < k; m++)
                 low[low_len++] = (uint8_t)tolower(data[m]);
 
             /* Verify roundtrip */
@@ -108,7 +108,7 @@ uint32_t tokenize(const uint8_t *data, uint32_t len,
                 /* Fallback: store as-is with flag 0 */
                 cflag = 0;
                 low_len = low_start;
-                for (uint32_t m = i; m < k; m++) low[low_len++] = data[m];
+                for (uint64_t m = i; m < k; m++) low[low_len++] = data[m];
             }
 
             toks[n_tok].data = &low[low_start];
@@ -118,12 +118,12 @@ uint32_t tokenize(const uint8_t *data, uint32_t len,
             i = k;
         } else {
             /* Non-alpha token */
-            uint32_t j = i + 1;
+            uint64_t j = i + 1;
             while (j < len && is_ws(data[j])) j++;
-            uint32_t low_start = low_len;
-            for (uint32_t m = i; m < j; m++) low[low_len++] = data[m];
+            uint64_t low_start = low_len;
+            for (uint64_t m = i; m < j; m++) low[low_len++] = data[m];
             toks[n_tok].data = &low[low_start];
-            toks[n_tok].len = j - i;
+            toks[n_tok].len = (uint32_t)(j - i);
             toks[n_tok].case_flag = 0;
             n_tok++;
             i = j;
@@ -139,31 +139,31 @@ uint32_t tokenize(const uint8_t *data, uint32_t len,
 /* ══════════════════════════════════════════════════════
  * Word split
  * ══════════════════════════════════════════════════════ */
-uint32_t word_split(const uint8_t *data, uint32_t len,
+uint32_t word_split(const uint8_t *data, uint64_t len,
                     const uint8_t ***words_out, uint16_t **lens_out) {
-    uint32_t cap = len / 4 + 16;
+    size_t cap = (size_t)(len / 4) + 16;
     const uint8_t **wp = (const uint8_t **)malloc(cap * sizeof(uint8_t *));
     uint16_t *wl = (uint16_t *)malloc(cap * sizeof(uint16_t));
     uint32_t nw = 0;
-    uint32_t i = 0;
+    uint64_t i = 0;
 
     while (i < len) {
         if (nw >= cap) {
-            cap *= 2;
+            cap += cap / 2;
             wp = (const uint8_t **)realloc(wp, cap * sizeof(uint8_t *));
             wl = (uint16_t *)realloc(wl, cap * sizeof(uint16_t));
         }
         if (is_alpha_or_hi(data[i])) {
-            uint32_t j = i + 1;
+            uint64_t j = i + 1;
             while (j < len && is_alpha_or_hi(data[j])) j++;
-            uint32_t k = j;
+            uint64_t k = j;
             while (k < len && is_ws(data[k])) k++;
             wp[nw] = &data[i];
             wl[nw] = (uint16_t)(k - i);
             nw++;
             i = k;
         } else {
-            uint32_t j = i + 1;
+            uint64_t j = i + 1;
             while (j < len && is_ws(data[j])) j++;
             wp[nw] = &data[i];
             wl[nw] = (uint16_t)(j - i);
@@ -178,62 +178,53 @@ uint32_t word_split(const uint8_t *data, uint32_t len,
 }
 
 /* ══════════════════════════════════════════════════════
- * Case encoding (small 3-symbol AC)
+ * Case encoding (order-2 adaptive, 24-bit AC, 3-symbol vmodel)
  * ══════════════════════════════════════════════════════ */
 uint8_t *enc_case(const uint8_t *flags, uint32_t n, uint32_t *out_len) {
-    /* Count frequencies */
-    uint32_t cf[3] = {0, 0, 0};
-    for (uint32_t i = 0; i < n; i++) cf[flags[i]]++;
+    qtc_vmodel_t models[3][3];  /* [prev_prev][prev] */
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            vmodel_init(&models[i][j], 3);
 
-    uint32_t fa[3];
-    for (int i = 0; i < 3; i++) fa[i] = cf[i] + 1;
-    uint32_t tm = fa[0] + fa[1] + fa[2];
-    uint32_t CM = 1u << 16;
+    qtc_encoder_t enc;
+    enc_init(&enc);
 
-    uint16_t quant[3];
-    for (int i = 0; i < 3; i++) {
-        uint32_t q = (uint32_t)((uint64_t)fa[i] * (CM - 3) / tm);
-        quant[i] = (uint16_t)(q < 1 ? 1 : q);
+    uint8_t pp = 0, p = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        venc_sym(&enc, &models[pp][p], flags[i]);
+        pp = p;
+        p = flags[i];
     }
 
-    uint16_t cdf[4] = {0, quant[0], (uint16_t)(quant[0] + quant[1]),
-                        (uint16_t)(quant[0] + quant[1] + quant[2])};
-    uint16_t total = cdf[3];
+    uint8_t *data = enc_finish(&enc, out_len);
 
-    /* Encode */
-    qtc_senc_t enc;
-    senc_init(&enc);
-    for (uint32_t i = 0; i < n; i++)
-        senc_encode(&enc, cdf[flags[i]], cdf[flags[i] + 1], total);
-    uint32_t ac_len;
-    uint8_t *ac_data = senc_finish(&enc, &ac_len);
-    senc_free(&enc);
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            vmodel_free(&models[i][j]);
 
-    /* Output: 3 uint16 (CDF values) + AC data */
-    *out_len = 6 + ac_len;
-    uint8_t *out = (uint8_t *)malloc(*out_len);
-    memcpy(out, &cdf[1], 2);
-    memcpy(out + 2, &cdf[2], 2);
-    memcpy(out + 4, &cdf[3], 2);
-    memcpy(out + 6, ac_data, ac_len);
-    free(ac_data);
-    return out;
+    return data;
 }
 
 uint8_t *dec_case(const uint8_t *data, uint32_t n, uint32_t data_len) {
-    uint16_t cdf[4];
-    cdf[0] = 0;
-    memcpy(&cdf[1], data, 2);
-    memcpy(&cdf[2], data + 2, 2);
-    memcpy(&cdf[3], data + 4, 2);
-    uint16_t total = cdf[3];
+    qtc_vmodel_t models[3][3];
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            vmodel_init(&models[i][j], 3);
 
-    qtc_sdec_t dec;
-    sdec_init(&dec, data + 6, data_len - 6);
+    qtc_decoder_t dec;
+    dec_init(&dec, data, data_len);
 
-    uint8_t *flags = (uint8_t *)malloc(n);
-    for (uint32_t i = 0; i < n; i++)
-        flags[i] = sdec_decode(&dec, cdf, total);
-    sdec_free(&dec);
-    return flags;
+    uint8_t *flags_out = (uint8_t *)malloc(n);
+    uint8_t pp = 0, p = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        flags_out[i] = (uint8_t)vdec_sym(&dec, &models[pp][p]);
+        pp = p;
+        p = flags_out[i];
+    }
+
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            vmodel_free(&models[i][j]);
+
+    return flags_out;
 }

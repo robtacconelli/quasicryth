@@ -2,6 +2,7 @@
  * QTC v5.4 - CLI entry point
  * Usage: qtc c|d|bench <file> [outfile]
  */
+#define _FILE_OFFSET_BITS 64
 #include "qtc.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,11 +12,19 @@
 static uint8_t *read_file(const char *path, size_t *len) {
     FILE *f = fopen(path, "rb");
     if (!f) { perror(path); return NULL; }
-    fseek(f, 0, SEEK_END);
-    *len = (size_t)ftell(f);
-    fseek(f, 0, SEEK_SET);
+    fseeko(f, 0, SEEK_END);
+    *len = (size_t)ftello(f);
+    fseeko(f, 0, SEEK_SET);
     uint8_t *buf = (uint8_t *)malloc(*len);
-    if (fread(buf, 1, *len, f) != *len) { perror("fread"); free(buf); fclose(f); return NULL; }
+    if (!buf) { fprintf(stderr, "Failed to allocate %zu bytes\n", *len); fclose(f); return NULL; }
+    size_t total = 0;
+    while (total < *len) {
+        size_t chunk = *len - total;
+        if (chunk > (1ULL << 30)) chunk = (1ULL << 30);  /* read in 1GB chunks */
+        size_t got = fread(buf + total, 1, chunk, f);
+        if (got == 0) { perror("fread"); free(buf); fclose(f); return NULL; }
+        total += got;
+    }
     fclose(f);
     return buf;
 }
@@ -23,7 +32,14 @@ static uint8_t *read_file(const char *path, size_t *len) {
 static int write_file(const char *path, const uint8_t *data, size_t len) {
     FILE *f = fopen(path, "wb");
     if (!f) { perror(path); return -1; }
-    if (fwrite(data, 1, len, f) != len) { perror("fwrite"); fclose(f); return -1; }
+    size_t total = 0;
+    while (total < len) {
+        size_t chunk = len - total;
+        if (chunk > (1ULL << 30)) chunk = (1ULL << 30);  /* write in 1GB chunks */
+        size_t written = fwrite(data + total, 1, chunk, f);
+        if (written == 0) { perror("fwrite"); fclose(f); return -1; }
+        total += written;
+    }
     fclose(f);
     return 0;
 }
@@ -36,8 +52,13 @@ static double now_sec(void) {
 
 static void usage(void) {
     fprintf(stderr,
-        "QTC v%s - Quasicrystalline Tiling Compressor\n"
-        "Usage: qtc <command> <file> [outfile]\n"
+        "QTC-Multi v%s - Multi-Tiling Quasicrystalline Compressor\n"
+        "Usage: qtc [options] <command> <file> [outfile]\n"
+        "Options:\n"
+        "  -f             Fibonacci-only mode (12 golden-ratio tilings)\n"
+        "  -n             No-tiling mode (unigrams + escapes only, A/B baseline)\n"
+        "  -p5            Period-5 mode (LLSLS periodic tiling, A/B test)\n"
+        "                 Default: multi-structure (18 tilings)\n"
         "Commands:\n"
         "  c|compress   <file> [outfile]   Compress file\n"
         "  d|decompress <file> [outfile]   Decompress file\n"
@@ -48,9 +69,32 @@ static void usage(void) {
 int main(int argc, char **argv) {
     if (argc < 3) { usage(); return 1; }
 
-    const char *cmd = argv[1];
-    const char *infile = argv[2];
-    const char *outfile = (argc > 3) ? argv[3] : NULL;
+    int argi = 1;
+    /* Parse options */
+    while (argi < argc && argv[argi][0] == '-') {
+        if (strcmp(argv[argi], "-f") == 0) {
+            extern int qtc_tiling_mode;
+            qtc_tiling_mode = QTC_TILING_FIB;
+            argi++;
+        } else if (strcmp(argv[argi], "-n") == 0) {
+            extern int qtc_tiling_mode;
+            qtc_tiling_mode = QTC_TILING_NONE;
+            argi++;
+        } else if (strcmp(argv[argi], "-p5") == 0) {
+            extern int qtc_tiling_mode;
+            qtc_tiling_mode = QTC_TILING_PERIOD5;
+            argi++;
+        } else {
+            fprintf(stderr, "Unknown option: %s\n", argv[argi]);
+            usage();
+            return 1;
+        }
+    }
+    if (argc - argi < 2) { usage(); return 1; }
+
+    const char *cmd = argv[argi];
+    const char *infile = argv[argi + 1];
+    const char *outfile = (argc - argi > 2) ? argv[argi + 2] : NULL;
 
     if (strcmp(cmd, "c") == 0 || strcmp(cmd, "compress") == 0) {
         size_t in_len;

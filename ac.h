@@ -14,14 +14,11 @@
 #define AC_FULL     (1u << AC_PREC)
 #define AC_HALF     (AC_FULL >> 1)
 #define AC_QTR      (AC_HALF >> 1)
-#define AC_MAX_FREQ (1u << 14)
-
-#define QTC_ESC_SYM 255
-#define QTC_EXT_SYM 254
+#define AC_MAX_FREQ (1u << 20)
 
 /* ── Adaptive model (256 symbols) ──────────────────── */
 typedef struct {
-    uint16_t freq[256];
+    uint32_t freq[256];
     uint32_t total;
 } qtc_model_t;
 
@@ -62,10 +59,20 @@ uint8_t dec_decode(qtc_decoder_t *d, const uint32_t cdf[257], uint32_t total);
 void    ac_enc_sym(qtc_encoder_t *e, qtc_model_t *m, uint8_t sym);
 uint8_t ac_dec_sym(qtc_decoder_t *d, qtc_model_t *m);
 
-/* Multi-stage index encoding (0-252 direct, 254+lo extended, 254+255+hi+lo stage2) */
-void    encode_index(qtc_encoder_t *e, qtc_model_t *model, qtc_model_t *ext, uint32_t idx);
-/* Returns index, or -1 for ESC, -2 for TRI(253) */
-int32_t decode_index(qtc_decoder_t *d, qtc_model_t *model, qtc_model_t *ext);
+/* ── Variable-size adaptive model (Fenwick-tree accelerated) ── */
+typedef struct {
+    uint32_t *freq;    /* raw frequencies [0..n_sym-1] */
+    uint32_t *tree;    /* Fenwick tree [0..n_sym], 1-indexed */
+    uint32_t  total;
+    uint32_t  n_sym;
+} qtc_vmodel_t;
+
+void     vmodel_init(qtc_vmodel_t *m, uint32_t n_sym);
+void     vmodel_free(qtc_vmodel_t *m);
+
+/* Encode/decode symbol using variable-size alphabet */
+void     venc_sym(qtc_encoder_t *e, qtc_vmodel_t *m, uint32_t sym);
+uint32_t vdec_sym(qtc_decoder_t *d, qtc_vmodel_t *m);
 
 /* ── Small AC (18-bit, for case flags) ─────────────── */
 #define SAC_PREC 18

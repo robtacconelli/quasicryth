@@ -11,12 +11,12 @@
  * ══════════════════════════════════════════════════════ */
 qtc_cb_sizes_t auto_codebook_sizes(uint32_t nw) {
     if (nw < 5000)         return (qtc_cb_sizes_t){509, 509, 350, 100, 50, 0, 0, 0, 0, 0, 0};
-    else if (nw < 50000)   return (qtc_cb_sizes_t){509, 509, 350, 200, 100, 50, 0, 0, 0, 0, 0};
-    else if (nw < 200000)  return (qtc_cb_sizes_t){2000, 1500, 500, 500, 200, 100, 50, 0, 0, 0, 0};
-    else if (nw < 500000)  return (qtc_cb_sizes_t){4000, 3000, 1000, 1000, 500, 300, 100, 50, 0, 0, 0};
-    else if (nw < 2000000) return (qtc_cb_sizes_t){8000, 6000, 2000, 2000, 1000, 1000, 500, 200, 0, 0, 0};
-    else if (nw < 10000000)return (qtc_cb_sizes_t){8000, 6000, 2000, 2000, 1000, 1000, 500, 500, 200, 0, 0};
-    else                   return (qtc_cb_sizes_t){8000, 6000, 2000, 2000, 1000, 1000, 500, 500, 200, 200, 100};
+    else if (nw < 50000)   return (qtc_cb_sizes_t){1000, 509, 500, 200, 100, 50, 0, 0, 0, 0, 0};
+    else if (nw < 200000)  return (qtc_cb_sizes_t){4000, 2000, 1000, 500, 200, 100, 50, 0, 0, 0, 0};
+    else if (nw < 500000)  return (qtc_cb_sizes_t){8000, 4000, 2000, 1000, 500, 300, 100, 50, 0, 0, 0};
+    else if (nw < 2000000) return (qtc_cb_sizes_t){16000, 8000, 4000, 2000, 1000, 1000, 500, 200, 100, 0, 0};
+    else if (nw < 10000000)return (qtc_cb_sizes_t){32000, 16000, 8000, 4000, 2000, 2000, 1000, 500, 200, 200, 100};
+    else                   return (qtc_cb_sizes_t){64000, 32000, 32000, 16000, 4000, 4000, 2000, 2000, 1000, 1000, 500};
 }
 
 /* ══════════════════════════════════════════════════════
@@ -24,11 +24,11 @@ qtc_cb_sizes_t auto_codebook_sizes(uint32_t nw) {
  * ══════════════════════════════════════════════════════ */
 static void intern_init(qtc_cbs_t *cbs, uint32_t est_unique) {
     bmap_init(&cbs->intern, est_unique);
-    cbs->pool_cap = est_unique * 8;
-    cbs->pool = (uint8_t *)malloc(cbs->pool_cap);
+    cbs->pool_cap = (uint64_t)est_unique * 8;
+    cbs->pool = (uint8_t *)malloc((size_t)cbs->pool_cap);
     cbs->pool_size = 0;
     cbs->words_cap = est_unique;
-    cbs->pool_offs = (uint32_t *)malloc(cbs->words_cap * sizeof(uint32_t));
+    cbs->pool_offs = (uint64_t *)malloc(cbs->words_cap * sizeof(uint64_t));
     cbs->pool_lens = (uint16_t *)malloc(cbs->words_cap * sizeof(uint16_t));
     cbs->n_unique = 0;
 }
@@ -41,12 +41,12 @@ static uint32_t intern_word(qtc_cbs_t *cbs, const uint8_t *data, uint16_t len) {
     uint32_t id = cbs->n_unique;
     if (id >= cbs->words_cap) {
         cbs->words_cap *= 2;
-        cbs->pool_offs = realloc(cbs->pool_offs, cbs->words_cap * sizeof(uint32_t));
+        cbs->pool_offs = realloc(cbs->pool_offs, cbs->words_cap * sizeof(uint64_t));
         cbs->pool_lens = realloc(cbs->pool_lens, cbs->words_cap * sizeof(uint16_t));
     }
     if (cbs->pool_size + len > cbs->pool_cap) {
         while (cbs->pool_size + len > cbs->pool_cap) cbs->pool_cap *= 2;
-        cbs->pool = realloc(cbs->pool, cbs->pool_cap);
+        cbs->pool = realloc(cbs->pool, (size_t)cbs->pool_cap);
     }
     cbs->pool_offs[id] = cbs->pool_size;
     cbs->pool_lens[id] = len;
@@ -89,7 +89,12 @@ void cbs_build(qtc_cbs_t *cbs,
     cbs->n_words = n_words;
 
     /* --- Intern all words --- */
-    intern_init(cbs, n_words / 4 + 256);
+    /* Cap estimate at 2M to avoid massive over-allocation for large files.
+     * For enwik9 (280M words, ~2M unique), n_words/4 = 70M → 256M-cap bmap = 3.5GB waste.
+     * The bmap grows via rehashing if the estimate is too low. */
+    uint32_t est = n_words / 4;
+    if (est > 2000000) est = 2000000;
+    intern_init(cbs, est + 256);
     cbs->word_ids = (uint32_t *)malloc(n_words * sizeof(uint32_t));
     for (uint32_t i = 0; i < n_words; i++)
         cbs->word_ids[i] = intern_word(cbs, word_ptrs[i], word_lens[i]);
@@ -175,9 +180,13 @@ void cbs_build(qtc_cbs_t *cbs,
 
         if (max_n == 0 || n_words < ng) continue;
 
-        /* Frequency counting with singleton pruning for large n-grams */
+        /* Frequency counting with singleton pruning */
         uint32_t n_iter = n_words - ng + 1;
-        uint32_t prune_interval = (ng >= 55) ? 200000 : (ng >= 13) ? 500000 : 0;
+        uint32_t prune_interval;
+        if (ng >= 55)          prune_interval = 200000;
+        else if (ng >= 13)     prune_interval = 500000;
+        else if (n_iter > 5000000) prune_interval = 2000000; /* prune tri/5g/8g on large inputs */
+        else                   prune_interval = 0;
         qtc_nmap_t freq;
         nmap_init(&freq, ng, wids, n_iter < 500000 ? n_iter : 500000);
 
@@ -339,6 +348,13 @@ void cbs_decode(qtc_cbs_t *cbs, const uint8_t *data, uint32_t off, uint32_t *new
     }
 
     *new_off = off;
+}
+
+/* ══════════════════════════════════════════════════════
+ * Free intern bmap early (saves ~3.5GB for large files)
+ * ══════════════════════════════════════════════════════ */
+void cbs_free_intern(qtc_cbs_t *cbs) {
+    bmap_free(&cbs->intern);
 }
 
 /* ══════════════════════════════════════════════════════

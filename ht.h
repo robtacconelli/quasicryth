@@ -89,16 +89,16 @@ static inline bool nmap_eq(const uint32_t *wids, uint32_t a, uint32_t b, uint8_t
     return memcmp(&wids[a], &wids[b], n * sizeof(uint32_t)) == 0;
 }
 
-/* ── Dynamic byte buffer ─────────────────────────────── */
+/* ── Dynamic byte buffer (supports >4GB) ─────────────── */
 typedef struct {
     uint8_t  *data;
-    uint32_t  len, cap;
+    size_t    len, cap;
 } qtc_buf_t;
 
-static inline void buf_init(qtc_buf_t *b, uint32_t cap) {
+static inline void buf_init(qtc_buf_t *b, size_t cap) {
     b->data = (uint8_t *)malloc(cap); b->len = 0; b->cap = cap;
 }
-static inline void buf_ensure(qtc_buf_t *b, uint32_t need) {
+static inline void buf_ensure(qtc_buf_t *b, size_t need) {
     if (b->len + need > b->cap) {
         while (b->len + need > b->cap) b->cap *= 2;
         b->data = (uint8_t *)realloc(b->data, b->cap);
@@ -107,7 +107,7 @@ static inline void buf_ensure(qtc_buf_t *b, uint32_t need) {
 static inline void buf_push(qtc_buf_t *b, uint8_t v) {
     buf_ensure(b, 1); b->data[b->len++] = v;
 }
-static inline void buf_append(qtc_buf_t *b, const uint8_t *d, uint32_t n) {
+static inline void buf_append(qtc_buf_t *b, const uint8_t *d, size_t n) {
     buf_ensure(b, n); memcpy(b->data + b->len, d, n); b->len += n;
 }
 static inline void buf_write16(qtc_buf_t *b, uint16_t v) {
@@ -115,6 +115,9 @@ static inline void buf_write16(qtc_buf_t *b, uint16_t v) {
 }
 static inline void buf_write32(qtc_buf_t *b, uint32_t v) {
     buf_ensure(b, 4); memcpy(b->data + b->len, &v, 4); b->len += 4;
+}
+static inline void buf_write64(qtc_buf_t *b, uint64_t v) {
+    buf_ensure(b, 8); memcpy(b->data + b->len, &v, 8); b->len += 8;
 }
 static inline void buf_free(qtc_buf_t *b) { free(b->data); b->data = NULL; }
 

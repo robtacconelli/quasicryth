@@ -1,6 +1,6 @@
 /*
- * QTC v5.4 - Quasicrystalline Tiling Compressor
- * Main header - types, constants, and public API
+ * QTC v5.5 Multi-Tiling - Quasicrystalline Tiling Compressor
+ * Uses 64 aperiodic tilings for increased n-gram coverage
  */
 #ifndef QTC_H
 #define QTC_H
@@ -10,19 +10,34 @@
 #include <stdbool.h>
 
 /* ── Constants ─────────────────────────────────────── */
-#define QTC_MAGIC       "QT54"
-#define QTC_VERSION     "5.4.0"
-#define QTC_N_PHASES    32
+#define QTC_MAGIC       "QM56"
+#define QTC_VERSION     "5.6.0"
 #define QTC_MAX_HIER    10      /* levels 0..9 */
 #define QTC_N_LEVELS    9       /* hierarchy levels 1..9 (above level-0) */
 #define QTC_ESC         255
 #define QTC_EXT         254
-#define QTC_HEADER_SIZE 39
+#define QTC_HEADER_SIZE 45  /* 37 + 4 (orig_size u32->u64) + 4 (lowered_size u32->u64) */
+#define QTC_N_TILINGS       36  /* 12 golden + 24 optimized (9 alphas × 2 phases + 6 original) */
+#define QTC_N_TILINGS_FIB   12  /* fibonacci-only: 12 golden-ratio phases */
+
+/* Tiling mode */
+#define QTC_TILING_MULTI    0   /* all 18 tilings (default) */
+#define QTC_TILING_FIB      1   /* fibonacci-only (12 golden-ratio phases) */
+#define QTC_TILING_NONE     2   /* no tiling — unigrams + escapes only (A/B baseline) */
+#define QTC_TILING_PERIOD5  3   /* period-5 (LLSLS) tiling — A/B periodic baseline */
+
+extern int qtc_tiling_mode;   /* set before compress/decompress */
 
 /* Fibonacci phrase lengths per hierarchy level (level 0..9) */
 static const int QTC_HIER_WORD_LENS[QTC_MAX_HIER] = {2, 3, 5, 8, 13, 21, 34, 55, 89, 144};
-/* Phase search bonuses per hierarchy level (1..9) */
-static const int QTC_SCORE_BONUS[QTC_MAX_HIER] = {0, 20, 50, 100, 200, 400, 800, 1600, 3200, 6400};
+
+/* Encoding levels: 0=escape, 1=unigram, 2=bigram, 3=trigram, ..., 11=144-gram */
+#define QTM_N_ENC_LEVELS 12
+
+/* Words per encoding level */
+static const int QTM_LEVEL_WORDS[QTM_N_ENC_LEVELS] = {
+    1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144
+};
 
 /* Codebook size tiers: [uni, bi, tri, 5g, 8g, 13g, 21g, 34g, 55g, 89g, 144g] */
 #define QTC_N_CODEBOOKS 11
@@ -92,10 +107,9 @@ typedef struct {
 
 /* ── Compressed file structure ─────────────────────── */
 typedef struct {
-    uint32_t    original_size;
-    uint32_t    lowered_size;
+    uint64_t    original_size;
+    uint64_t    lowered_size;
     uint32_t    n_words;
-    uint16_t    phase_q;
     uint8_t     flags;
     uint32_t    n_tokens;
     uint32_t    payload_size;

@@ -21,11 +21,11 @@ typedef struct {
     /* Word interning table */
     qtc_bmap_t intern;       /* bytes -> word_id */
     uint8_t   *pool;         /* all word bytes */
-    uint32_t  *pool_offs;    /* offset of each unique word in pool */
+    uint64_t  *pool_offs;    /* offset of each unique word in pool */
     uint16_t  *pool_lens;    /* length of each unique word */
     uint32_t   n_unique;     /* number of unique words */
-    uint32_t   pool_size;
-    uint32_t   pool_cap;
+    uint64_t   pool_size;
+    uint64_t   pool_cap;
     uint32_t   words_cap;
 
     /* Word IDs array (words[i] -> word_id) */
@@ -66,6 +66,10 @@ uint8_t *cbs_encode(const qtc_cbs_t *cbs, uint32_t *out_len);
  * Only fills uni/bi/ng_wids and counts, pool, etc.
  * No lookup maps are built (not needed for decompress). */
 void cbs_decode(qtc_cbs_t *cbs, const uint8_t *data, uint32_t off, uint32_t *new_off);
+
+/* Free just the intern bmap (hash table) early to reclaim memory.
+ * Keeps pool, pool_offs, pool_lens, word_ids, and codebook data intact. */
+void cbs_free_intern(qtc_cbs_t *cbs);
 
 void cbs_free(qtc_cbs_t *cbs);
 
