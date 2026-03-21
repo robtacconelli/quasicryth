@@ -53,7 +53,9 @@ QTC is a lossless text compressor built on 36 aperiodic tilings drawn from multi
 | enwik8 | 100 MB | **26.25%** | 27.03% | 36.44% | 29.00% | 24.86% |
 | enwik9 | 1 GB | **22.59%** | 23.46% | 32.26% | 25.40% | 21.57% |
 
-QTC beats bzip2 on all benchmarks and approaches xz at scale.
+QTC beats bzip2 on all benchmarks and approaches xz at scale (gap: 1.02pp on enwik9).
+
+![Compression ratio vs file size](charts/chart4.png)
 
 ### Compressed File Breakdown (enwik9)
 
@@ -77,11 +79,15 @@ QTC beats bzip2 on all benchmarks and approaches xz at scale.
 
 Decompression throughput: ~22 MB/s. Asymmetric by design -- compression performs tiling search across 36 structures; decompression simply reads the encoded event stream sequentially.
 
+![C/D ratio](charts/chart3.png)
+
 ---
 
 ## Deep Hierarchy Hits
 
 The core advantage of quasicrystalline tiling is access to deep hierarchy levels that periodic tilings cannot reach. These are the greedy-selected deep phrase matches (13-gram and above) across benchmarks:
+
+![Deep hits scaling](charts/chart1.png)
 
 | File | Words | 13g | 21g | 34g | 55g | 89g | 144g | Total |
 |---|---|---|---|---|---|---|---|---|
@@ -92,6 +98,8 @@ The core advantage of quasicrystalline tiling is access to deep hierarchy levels
 | enwik9 | 298.3M | 1,890,784 | 424,084 | 153,713 | 36,776 | 5,544 | 2,026 | 2,512,927 |
 
 At enwik9 scale, over 2.5 million phrase matches span 13 words or more, including 2,026 matches spanning 144 consecutive words each.
+
+![Word-weighted contribution](charts/chart2.png)
 
 ---
 
@@ -122,6 +130,8 @@ Controlled experiments with identical codebooks, varying only the tiling strateg
 | Multi vs Fibonacci advantage | 458 B | 8,642,288 B |
 
 The aperiodic advantage grows superlinearly with input size. Period-5 (LLSLS) hierarchy collapses at level 4 -- all tiles become S, yielding zero positions at 13-gram and above. The Fibonacci hierarchy never collapses.
+
+![Aperiodic advantage](charts/chart5.png)
 
 ---
 
