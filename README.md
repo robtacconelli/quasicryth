@@ -134,7 +134,7 @@ The Fibonacci substitution L -> LS, S -> L has substitution matrix with dominant
 - **Equidistribution** (Weyl 1910): for irrational alpha, the sequence {k*alpha mod 1} is equidistributed on [0,1), ensuring uniform n-gram coverage at every scale.
 - **Sturmian structure**: the Fibonacci word is balanced and aperiodic with minimal factor complexity (n+1 distinct factors of length n), maximising codebook efficiency.
 
-A detailed formal analysis, including eigenvalue proofs, the three-distance theorem, and information-theoretic bounds on the aperiodic advantage, is available in the accompanying paper (`quasicryth_paper.pdf`).
+A detailed formal analysis, including eigenvalue proofs, the three-distance theorem, and information-theoretic bounds on the aperiodic advantage, is available in the accompanying paper: [arXiv:2603.14999](https://arxiv.org/abs/2603.14999).
 
 ---
 
