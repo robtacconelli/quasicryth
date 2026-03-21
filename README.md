@@ -1,6 +1,6 @@
-# Quasicryth (QTC v5.6)
+<img src="quasicryth_banner.png">
 
-**Aperiodic Structures Never Collapse: Multi-Tiling Fibonacci Hierarchies for Lossless Compression**
+**Aperiodic Structures Never Collapse: Fibonacci Hierarchies for Lossless Compression**
 
 QTC is a lossless text compressor built on 36 aperiodic tilings drawn from multiple irrational-number families. A 10-level Fibonacci substitution hierarchy extracts phrases up to 144 words long, which are then encoded through adaptive arithmetic coding with word-level LZ77. Written in C with no external ML dependencies.
 
